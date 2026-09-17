@@ -1,10 +1,12 @@
+import os
+os.environ["KERAS_BACKEND"] = "torch"   # MUSS vor dem keras-Import stehen
+
+import keras
 from PIL import Image
 from PIL.ExifTags import TAGS
 import numpy as np
 import cv2
 from ultralytics import YOLO
-import tensorflow as tf
-import os
 import matplotlib.pyplot as plt
 import pandas as pd
 from datetime import datetime
@@ -18,44 +20,36 @@ register_heif_opener()
 # Load environment variables
 load_dotenv()
 
-# ============== M4 MAX OPTIMIZATIONS ==============
+# ============== CONFIG ==============
 
-# Use all available CPU cores for TensorFlow
-NUM_CORES = os.cpu_count()  # M4 Max has 14 or 16 cores
-tf.config.threading.set_intra_op_parallelism_threads(NUM_CORES)
-tf.config.threading.set_inter_op_parallelism_threads(NUM_CORES)
+# Cores fuer das threaded EXIF-Prefetching (I/O-bound)
+NUM_CORES = os.cpu_count()
 
-# Enable Metal GPU acceleration for TensorFlow if available
-try:
-    gpus = tf.config.list_physical_devices('GPU')
-    if gpus:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-        print(f"Metal GPU enabled: {gpus}")
-    else:
-        print("No GPU found, using CPU")
-except Exception as e:
-    print(f"GPU setup error: {e}")
-
-print(f"Using {NUM_CORES} CPU cores for TensorFlow")
-
-# Configuration
 historical_data_dir = "./historical_data"
 results_dir = "./historical_data_results"
 os.makedirs(results_dir, exist_ok=True)
+
+csv_path = os.path.join(results_dir, 'historical_insect_data.csv')
 
 # Get prediction parameters from environment variables with defaults
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.20'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.20'))
 
+# Model paths (ueber .env ueberschreibbar)
+YOLO_WEIGHTS = os.getenv('YOLO_WEIGHTS', './runs/detect/train-9/weights/best.pt')
+CLASSIFIER_PATH = os.getenv('CLASSIFIER_PATH', './InsectClassificationModel/insect_classifier.keras')
+
+# FORCE_REPROCESS=1 -> bestehende CSV ignorieren und alles neu rechnen
+FORCE_REPROCESS = os.getenv('FORCE_REPROCESS', '0') == '1'
+
 # Classification batch size (process multiple crops at once instead of one-by-one)
 CLASSIFICATION_BATCH_SIZE = 32
 
-# Load the YOLO detection model
-yolo_model = YOLO('./runs/detect/train9/weights/last.pt')
+# Kuerzel des verwendeten Modells, landet als Spalte in der CSV
+MODEL_TAG = os.path.basename(os.path.dirname(os.path.dirname(YOLO_WEIGHTS))) + '/' + os.path.basename(YOLO_WEIGHTS)
 
-# Load the Keras classification model
-classifier_model = tf.keras.models.load_model('./InsectClassificationModel/insect_classifier.keras')
+# Spalten, die aus 'date' abgeleitet werden und nach jedem Merge neu berechnet werden
+DERIVED_COLUMNS = ['year', 'week', 'calendar_week']
 
 
 def extract_datetime_from_image(image_path):
@@ -120,7 +114,7 @@ def process_image(image_path):
         image = image.convert('RGB')
 
     # Run YOLO inference
-    results = yolo_model.predict(image, conf=CONFIDENCE_THRESHOLD, iou=IOU_THRESHOLD)
+    results = yolo_model.predict(image, conf=CONFIDENCE_THRESHOLD, iou=IOU_THRESHOLD, verbose=False)
     detected_insects = results[0].boxes
 
     # Initialize counters
@@ -140,18 +134,18 @@ def process_image(image_path):
         if cropped_resized.mode != 'RGB':
             cropped_resized = cropped_resized.convert('RGB')
 
-        img_array = np.array(cropped_resized) / 255.0
+        img_array = np.array(cropped_resized, dtype=np.float32) / 255.0
         crops.append(img_array)
 
     # Batch classify all crops at once (much faster than one-by-one)
-    crops_batch = np.array(crops)
+    crops_batch = np.array(crops, dtype=np.float32)
 
     # Process in chunks if there are many detections
     all_predictions = []
     for i in range(0, len(crops_batch), CLASSIFICATION_BATCH_SIZE):
         batch = crops_batch[i:i + CLASSIFICATION_BATCH_SIZE]
         predictions = classifier_model.predict(batch, verbose=0, batch_size=CLASSIFICATION_BATCH_SIZE)
-        all_predictions.extend(predictions.flatten())
+        all_predictions.extend(np.asarray(predictions).flatten())
 
     # Count classes from batch predictions
     for prediction in all_predictions:
@@ -170,71 +164,132 @@ def prefetch_exif(image_paths):
     return dates
 
 
-# ============== MAIN PROCESSING ==============
+def add_derived_columns(frame):
+    """(Neu-)Berechnung von year / week / calendar_week aus der date-Spalte."""
+    frame = frame.drop(columns=[c for c in DERIVED_COLUMNS if c in frame.columns])
+    iso = frame['date'].dt.isocalendar()
+    frame['year'] = iso.year.astype(int)
+    frame['week'] = iso.week.astype(int)
+    frame['calendar_week'] = frame['year'].astype(str) + '-KW' + frame['week'].astype(str).str.zfill(2)
+    return frame
+
+
+# ============== LOAD EXISTING RESULTS ==============
 
 print("=" * 60)
 print("Historical Data Analysis")
 print("=" * 60)
 
-# Get all image files from the historical_data folder
+existing_df = pd.DataFrame()
+processed_files = set()
+
+if os.path.exists(csv_path) and not FORCE_REPROCESS:
+    try:
+        existing_df = pd.read_csv(csv_path, parse_dates=['date'])
+        processed_files = set(existing_df['filename'].astype(str))
+        print(f"Bestehende CSV gefunden: {len(existing_df)} Zeilen bereits verarbeitet")
+    except Exception as e:
+        print(f"CSV konnte nicht gelesen werden ({e}) - es wird eine neue angelegt")
+        existing_df = pd.DataFrame()
+        processed_files = set()
+elif FORCE_REPROCESS:
+    print("FORCE_REPROCESS=1 - bestehende CSV wird ignoriert und alles neu berechnet")
+else:
+    print("Keine bestehende CSV - es wird eine neue angelegt")
+
+# ============== FIND NEW IMAGES ==============
+
 supported_extensions = ('.jpg', '.jpeg', '.png', '.tiff', '.tif', '.heic')
 image_files = [
     f for f in os.listdir(historical_data_dir)
     if f.lower().endswith(supported_extensions) and not f.startswith('.')
 ]
 
-if len(image_files) == 0:
+new_files = sorted(f for f in image_files if f not in processed_files)
+
+print(f"Bilder im Ordner: {len(image_files)} | davon neu: {len(new_files)}")
+
+if len(image_files) == 0 and existing_df.empty:
     print(f"No images found in {historical_data_dir}")
-    exit()
+    raise SystemExit(0)
 
-print(f"Found {len(image_files)} images to process\n")
+if not new_files and existing_df.empty:
+    print("Nichts zu verarbeiten und keine bestehenden Daten.")
+    raise SystemExit(0)
 
-# Pre-extract all EXIF dates in parallel (threaded I/O)
-print("Extracting EXIF dates from all images...")
-image_paths = [os.path.join(historical_data_dir, f) for f in image_files]
-capture_dates = prefetch_exif(image_paths)
-print(f"EXIF extraction complete\n")
+# ============== PROCESS NEW IMAGES ==============
 
-# Store results for each image
 results_data = []
 
-for i, filename in enumerate(image_files):
-    image_path = os.path.join(historical_data_dir, filename)
+if new_files:
+    # Modelle erst laden, wenn tatsaechlich etwas zu rechnen ist
+    if not os.path.exists(YOLO_WEIGHTS):
+        raise FileNotFoundError(
+            f"YOLO-Gewichte nicht gefunden: {YOLO_WEIGHTS}\n"
+            f"Verfuegbare Runs: {os.listdir('./runs/detect') if os.path.isdir('./runs/detect') else 'kein runs/detect'}"
+        )
 
-    print(f"[{i+1}/{len(image_files)}] Processing: {filename}")
+    print(f"\nLade YOLO-Modell: {YOLO_WEIGHTS}")
+    yolo_model = YOLO(YOLO_WEIGHTS)
 
-    capture_date = capture_dates[i]
+    print(f"Lade Klassifikator: {CLASSIFIER_PATH}")
+    classifier_model = keras.saving.load_model(CLASSIFIER_PATH)
 
-    # Process image through YOLO + batched classifier
-    class_counts, total_count = process_image(image_path)
+    print(f"\nExtrahiere EXIF-Daten ({NUM_CORES} Threads)...")
+    new_paths = [os.path.join(historical_data_dir, f) for f in new_files]
+    capture_dates = prefetch_exif(new_paths)
+    print("EXIF-Extraktion abgeschlossen\n")
 
-    # Store result
-    results_data.append({
-        'filename': filename,
-        'date': capture_date,
-        'total_insects': total_count,
-        'muscidae': class_counts['Muscidae'],
-        'others': class_counts['Others']
-    })
+    for i, filename in enumerate(new_files):
+        image_path = os.path.join(historical_data_dir, filename)
 
-    print(f"  Date: {capture_date.strftime('%Y-%m-%d %H:%M')}")
-    print(f"  Total: {total_count} | Muscidae: {class_counts['Muscidae']} | Others: {class_counts['Others']}")
-    print()
+        print(f"[{i+1}/{len(new_files)}] Processing: {filename}")
 
-# ============== CREATE DATAFRAME AND SORT BY DATE ==============
+        capture_date = capture_dates[i]
+        class_counts, total_count = process_image(image_path)
 
-df = pd.DataFrame(results_data)
+        results_data.append({
+            'filename': filename,
+            'date': capture_date,
+            'total_insects': total_count,
+            'muscidae': class_counts['Muscidae'],
+            'others': class_counts['Others'],
+            'model': MODEL_TAG,
+        })
+
+        print(f"  Date: {capture_date.strftime('%Y-%m-%d %H:%M')}")
+        print(f"  Total: {total_count} | Muscidae: {class_counts['Muscidae']} | Others: {class_counts['Others']}")
+        print()
+else:
+    print("\nKeine neuen Bilder - Charts werden aus den bestehenden Daten neu erzeugt.\n")
+
+# ============== MERGE AND SAVE ==============
+
+new_df = pd.DataFrame(results_data)
+
+if not existing_df.empty and not new_df.empty:
+    df = pd.concat([existing_df, new_df], ignore_index=True)
+elif not new_df.empty:
+    df = new_df
+else:
+    df = existing_df.copy()
+
+# Alte Zeilen bleiben erhalten; ein erneut verarbeitetes Bild ersetzt seinen alten Eintrag
+df['date'] = pd.to_datetime(df['date'])
+df = df.drop_duplicates(subset='filename', keep='last')
 df = df.sort_values('date').reset_index(drop=True)
+df = add_derived_columns(df)
 
-# Add calendar week column (ISO week number and year)
-df['year'] = df['date'].dt.isocalendar().year.astype(int)
-df['week'] = df['date'].dt.isocalendar().week.astype(int)
-df['calendar_week'] = df['year'].astype(str) + '-KW' + df['week'].astype(str).str.zfill(2)
+if 'model' not in df.columns:
+    df['model'] = ''
+df['model'] = df['model'].fillna('')
 
-# Save raw data as CSV
-csv_path = os.path.join(results_dir, 'historical_insect_data.csv')
+# Spaltenreihenfolge stabil halten
+column_order = ['filename', 'date', 'total_insects', 'muscidae', 'others', 'model'] + DERIVED_COLUMNS
+df = df[[c for c in column_order if c in df.columns]]
+
 df.to_csv(csv_path, index=False)
-print(f"Data saved to {csv_path}")
+print(f"CSV aktualisiert: {csv_path}  ({len(new_df)} neu, {len(df)} gesamt)")
 
 # ============== GENERATE CHARTS ==============
 
@@ -365,7 +420,6 @@ plt.close()
 print("Saved: trend_per_calendar_week.png")
 
 # 5. Box plot per calendar week (min, max, median, mean, quartiles)
-# Sort calendar weeks for correct order
 kw_order = kw_grouped['calendar_week'].tolist()
 
 fig, axes = plt.subplots(1, 3, figsize=(max(18, len(kw_grouped) * 3), 7))
@@ -392,6 +446,7 @@ for ax, column, title, color in [
 
     # Add image count labels
     box_kw_labels = [f"{kw}\n(n={int(kw_grouped[kw_grouped['calendar_week'] == kw]['image_count'].values[0])})" for kw in kw_order]
+    ax.set_xticks(np.arange(1, len(kw_order) + 1))
     ax.set_xticklabels(box_kw_labels, rotation=45, ha='right', fontsize=7)
     ax.set_title(title)
     ax.set_ylabel('Count per Image')
@@ -434,13 +489,21 @@ print("Saved: distribution_pie_chart.png")
 print("\n" + "=" * 60)
 print("SUMMARY")
 print("=" * 60)
-print(f"Total images processed: {len(df)}")
+print(f"Neu verarbeitet in diesem Lauf: {len(new_df)}")
+print(f"Total images in dataset: {len(df)}")
 print(f"Date range: {df['date'].min().strftime('%Y-%m-%d')} to {df['date'].max().strftime('%Y-%m-%d')}")
 print(f"Total insects detected: {df['total_insects'].sum()}")
 print(f"Total Muscidae: {total_muscidae}")
 print(f"Total Others: {total_others}")
 print(f"Average insects per image: {df['total_insects'].mean():.1f}")
 print(f"Peak count: {df['total_insects'].max()} ({df.loc[df['total_insects'].idxmax(), 'filename']})")
+
+models_used = sorted(m for m in df['model'].unique() if m)
+if len(models_used) > 1:
+    print(f"\nWARNUNG: Zeilen stammen aus mehreren Modellen: {', '.join(models_used)}")
+    print("Fuer konsistente Zahlen einmal mit FORCE_REPROCESS=1 durchlaufen lassen.")
+elif models_used:
+    print(f"Modell: {models_used[0]}")
 
 print(f"\nPer Calendar weeks:")
 for _, row in kw_grouped.iterrows():
