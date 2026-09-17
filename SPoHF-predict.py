@@ -13,13 +13,13 @@ conf_threshold = float(os.getenv('CONFIDENCE_THRESHOLD', '0.70'))
 iou_threshold = float(os.getenv('IOU_THRESHOLD', '0.20'))
 
 # Load the image and resize it to:
-image_path = './Manual-Test-Data/1.jpg'
+image_path = './Manual-Test-Data/34.HEIC'
 image = Image.open(image_path)
 #image_resized = image.resize((640, 640))
 
 # Load the trained model
 # There are two versions after each run you can choose between last.pt and best.pt
-model = YOLO('./runs/detect/train9/weights/last.pt')
+model = YOLO('./runs/detect/train-9/weights/best.pt')
 
 # Run inference on the resized image
 # conf=0.40 the minimum confidence for diplaying boundingboxes
