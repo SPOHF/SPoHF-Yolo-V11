@@ -6,8 +6,8 @@ nc: 1
 names: ['Insects']
 
 roboflow:
-  workspace: annotationswithrf
-  project: spohf-kur4x-dokg9-rxwfv
-  version: 4
+  workspace: spohf-insect-counting
+  project: spohf-kur4x-dokg9
+  version: 10
   license: CC BY 4.0
-  url: https://universe.roboflow.com/annotationswithrf/spohf-kur4x-dokg9-rxwfv/dataset/4
+  url: https://universe.roboflow.com/spohf-insect-counting/spohf-kur4x-dokg9/dataset/10
