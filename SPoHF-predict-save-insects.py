@@ -10,7 +10,7 @@ image_path = './Manual-Test-Data/3.jpg'
 image = Image.open(image_path)
 
 # Load the trained model
-model = YOLO('./runs/detect/train9/weights/last.pt')
+model = YOLO('./runs/detect/train-9/weights/last.pt')
 
 # Run inference on the image
 results = model.predict(image, conf=0.10, iou=0.2)
