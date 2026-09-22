@@ -49,6 +49,7 @@ foundInsects/*
 # Secrets
 .env
 *.env
+!.env-example
 
 # EXCEPT for the model in AI-Insect-Micro-Service
 !Web-Application/Services/AI-Insect-Micro-Service/model/last.pt
