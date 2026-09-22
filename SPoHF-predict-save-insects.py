@@ -6,14 +6,14 @@ import os
 import uuid  # For generating unique random strings
 
 # Load the image and resize it to 1280x1280
-image_path = './Manual-Test-Data/6.jpg'
+image_path = './Manual-Test-Data/3.jpg'
 image = Image.open(image_path)
 
 # Load the trained model
-model = YOLO('./runs/detect/train9/weights/last.pt')
+model = YOLO('./runs/detect/train-9/weights/last.pt')
 
 # Run inference on the image
-results = model.predict(image, conf=0.7, iou=0.2)
+results = model.predict(image, conf=0.10, iou=0.2)
 
 # Display results with custom settings
 annotated_image = results[0].plot(labels=True, font_size=4, line_width=1)

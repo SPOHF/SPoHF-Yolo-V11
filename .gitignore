@@ -7,6 +7,7 @@ __pycache__/
 *.tmp
 *.log
 
+
 # Ignore virtual environment
 venv/
 
@@ -16,6 +17,10 @@ test/*
 valid/*
 runs/*
 InsectClassificationModel/*
+Manual-Test-Data/*
+DWD-Data/*
+dwd_neurath.xlsx
+.python-version
 
 # Keep .gitkeep so the folders stay in repo
 !train/.gitkeep
@@ -38,6 +43,8 @@ foundInsects/*
 
 # Ignore PyTorch model weights
 *.pt
+!Best-Model-Weights/last.pt
+!Best-Model-Weights/best.pt
 
 # Secrets
 .env

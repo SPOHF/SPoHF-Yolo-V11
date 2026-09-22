@@ -9,7 +9,7 @@ The project focuses on building and training YOLOv11 models for insect detection
 Please note that dataset folders are intentionally empty — users need to download or provide their own data to run the experiments.
 
 > **Ultralytics and Yolo Versions:**  
-> The ultralytics package supports multiple YOLO versions, from v3 to v2026 [V13]. You can use any of these versions with the setup provided in this repository. For further deployment instructions, please check the doc at: https://docs.ultralytics.com/models/
+> The ultralytics package supports multiple YOLO versions, from v3 to v2026. You can use any of these versions with the setup provided in this repository. For further deployment instructions, please check the doc at: https://docs.ultralytics.com/models/
 > ![Yolo-Version-Perfromance](./PR-Material/Yolo-versions-performance.png)
 
 > **Important note:**  
@@ -36,16 +36,16 @@ Verify installation:
 brew --version
 ```
 
-2. Install Python 3.13 via Homebrew (YoloV11 officially supports Python 3.8 up to 3.12)
+2. Install Python 3.14 via Homebrew
 
 ```bash
-brew install python@3.13
+brew install python@3.14
 ```
 
 Make sure your shell uses the correct version:
 
 ```bash
-brew link python@3.13 --force --overwrite
+brew link python@3.14 --force --overwrite
 python3 --version
 ```
 
@@ -80,43 +80,6 @@ pip install -r requirements.txt
 7. Use the trainTheModel.py file to train a yolo v11 model - Currently MPS (Apple Metal) is supported, and works, for best performance use a NVIDIA GPU and set device="CUDA"
 
 8. Run the SPoHF-predict.py to test your model PS: update the path to your trained model - example (unseen) data is provided in the `Manual-Test-Data` folder
-
-9. Classification Model (Feature)
-
-   The project includes a binary classification model that distinguishes between two insects species detected by YOLO.
-
-   **Prerequisites:**
-   - You need labeled training data with two classes (e.g., `Muscidae` and `Others`)
-   - Data should be organized in folders:
-     ```
-     Insect-Types-Classes/
-     ├── Muscidae/
-     │   ├── image1.jpg
-     │   ├── image2.jpg
-     │   └── ...
-     └── Others/
-         ├── image1.jpg
-         ├── image2.jpg
-         └── ...
-     ```
-
-   Options:
-   - Use your own data: Create your own dataset with two custom insect categories
-   - Request data: Contact the repository owner to request the training dataset used in this project
-
-   **Training the classifier:**
-
-   ```bash
-   python TrainModelForInsectClassification.py
-   ```
-
-   **Using combined inference (YOLO + Classification):**
-
-After training, you can use `predict_Insect_Species.py` for combined inference that detects insects with YOLO and classifies each detection using the sigmoid classifier:
-
-```bash
-python predict_Insect_Species.py
-```
 
 # Installation Instructions (Windows)
 
