@@ -1,5 +1,5 @@
 import os
-os.environ["KERAS_BACKEND"] = "torch"   # MUSS vor dem keras-Import stehen
+os.environ["KERAS_BACKEND"] = "torch"   # MUST be set before the keras import
 
 import keras
 from PIL import Image
@@ -22,7 +22,7 @@ load_dotenv()
 
 # ============== CONFIG ==============
 
-# Cores fuer das threaded EXIF-Prefetching (I/O-bound)
+# Cores for the threaded EXIF prefetching (I/O-bound)
 NUM_CORES = os.cpu_count()
 
 historical_data_dir = "./historical_data"
@@ -35,20 +35,20 @@ csv_path = os.path.join(results_dir, 'historical_insect_data.csv')
 CONFIDENCE_THRESHOLD = float(os.getenv('CONFIDENCE_THRESHOLD', '0.20'))
 IOU_THRESHOLD = float(os.getenv('IOU_THRESHOLD', '0.20'))
 
-# Model paths (ueber .env ueberschreibbar)
+# Model paths (overridable via .env)
 YOLO_WEIGHTS = os.getenv('YOLO_WEIGHTS', './runs/detect/train-9/weights/best.pt')
 CLASSIFIER_PATH = os.getenv('CLASSIFIER_PATH', './InsectClassificationModel/insect_classifier.keras')
 
-# FORCE_REPROCESS=1 -> bestehende CSV ignorieren und alles neu rechnen
+# FORCE_REPROCESS=1 -> ignore the existing CSV and recompute everything
 FORCE_REPROCESS = os.getenv('FORCE_REPROCESS', '0') == '1'
 
 # Classification batch size (process multiple crops at once instead of one-by-one)
 CLASSIFICATION_BATCH_SIZE = 32
 
-# Kuerzel des verwendeten Modells, landet als Spalte in der CSV
+# Short tag of the model used, ends up as a column in the CSV
 MODEL_TAG = os.path.basename(os.path.dirname(os.path.dirname(YOLO_WEIGHTS))) + '/' + os.path.basename(YOLO_WEIGHTS)
 
-# Spalten, die aus 'date' abgeleitet werden und nach jedem Merge neu berechnet werden
+# Columns derived from 'date', recomputed after every merge
 DERIVED_COLUMNS = ['year', 'week', 'calendar_week']
 
 
@@ -165,7 +165,7 @@ def prefetch_exif(image_paths):
 
 
 def add_derived_columns(frame):
-    """(Neu-)Berechnung von year / week / calendar_week aus der date-Spalte."""
+    """(Re)compute year / week / calendar_week from the date column."""
     frame = frame.drop(columns=[c for c in DERIVED_COLUMNS if c in frame.columns])
     iso = frame['date'].dt.isocalendar()
     frame['year'] = iso.year.astype(int)
@@ -187,15 +187,15 @@ if os.path.exists(csv_path) and not FORCE_REPROCESS:
     try:
         existing_df = pd.read_csv(csv_path, parse_dates=['date'])
         processed_files = set(existing_df['filename'].astype(str))
-        print(f"Bestehende CSV gefunden: {len(existing_df)} Zeilen bereits verarbeitet")
+        print(f"Existing CSV found: {len(existing_df)} rows already processed")
     except Exception as e:
-        print(f"CSV konnte nicht gelesen werden ({e}) - es wird eine neue angelegt")
+        print(f"Could not read the CSV ({e}) - a new one will be created")
         existing_df = pd.DataFrame()
         processed_files = set()
 elif FORCE_REPROCESS:
-    print("FORCE_REPROCESS=1 - bestehende CSV wird ignoriert und alles neu berechnet")
+    print("FORCE_REPROCESS=1 - ignoring the existing CSV and recomputing everything")
 else:
-    print("Keine bestehende CSV - es wird eine neue angelegt")
+    print("No existing CSV - a new one will be created")
 
 # ============== FIND NEW IMAGES ==============
 
@@ -207,14 +207,14 @@ image_files = [
 
 new_files = sorted(f for f in image_files if f not in processed_files)
 
-print(f"Bilder im Ordner: {len(image_files)} | davon neu: {len(new_files)}")
+print(f"Images in folder: {len(image_files)} | new: {len(new_files)}")
 
 if len(image_files) == 0 and existing_df.empty:
     print(f"No images found in {historical_data_dir}")
     raise SystemExit(0)
 
 if not new_files and existing_df.empty:
-    print("Nichts zu verarbeiten und keine bestehenden Daten.")
+    print("Nothing to process and no existing data.")
     raise SystemExit(0)
 
 # ============== PROCESS NEW IMAGES ==============
@@ -222,20 +222,20 @@ if not new_files and existing_df.empty:
 results_data = []
 
 if new_files:
-    # Modelle erst laden, wenn tatsaechlich etwas zu rechnen ist
+    # Only load the models when there is actually something to compute
     if not os.path.exists(YOLO_WEIGHTS):
         raise FileNotFoundError(
-            f"YOLO-Gewichte nicht gefunden: {YOLO_WEIGHTS}\n"
-            f"Verfuegbare Runs: {os.listdir('./runs/detect') if os.path.isdir('./runs/detect') else 'kein runs/detect'}"
+            f"YOLO weights not found: {YOLO_WEIGHTS}\n"
+            f"Available runs: {os.listdir('./runs/detect') if os.path.isdir('./runs/detect') else 'no runs/detect folder'}"
         )
 
-    print(f"\nLade YOLO-Modell: {YOLO_WEIGHTS}")
+    print(f"\nLoading YOLO model: {YOLO_WEIGHTS}")
     yolo_model = YOLO(YOLO_WEIGHTS)
 
-    print(f"Lade Klassifikator: {CLASSIFIER_PATH}")
+    print(f"Loading classifier: {CLASSIFIER_PATH}")
     classifier_model = keras.saving.load_model(CLASSIFIER_PATH)
 
-    print(f"\nExtrahiere EXIF-Daten ({NUM_CORES} Threads)...")
+    print(f"\nExtracting EXIF data ({NUM_CORES} threads)...")
     new_paths = [os.path.join(historical_data_dir, f) for f in new_files]
     capture_dates = prefetch_exif(new_paths)
     print("EXIF-Extraktion abgeschlossen\n")
@@ -261,7 +261,7 @@ if new_files:
         print(f"  Total: {total_count} | Muscidae: {class_counts['Muscidae']} | Others: {class_counts['Others']}")
         print()
 else:
-    print("\nKeine neuen Bilder - Charts werden aus den bestehenden Daten neu erzeugt.\n")
+    print("\nNo new images - charts are regenerated from the existing data.\n")
 
 # ============== MERGE AND SAVE ==============
 
@@ -274,7 +274,7 @@ elif not new_df.empty:
 else:
     df = existing_df.copy()
 
-# Alte Zeilen bleiben erhalten; ein erneut verarbeitetes Bild ersetzt seinen alten Eintrag
+# Old rows are kept; a reprocessed image replaces its previous entry
 df['date'] = pd.to_datetime(df['date'])
 df = df.drop_duplicates(subset='filename', keep='last')
 df = df.sort_values('date').reset_index(drop=True)
@@ -284,12 +284,12 @@ if 'model' not in df.columns:
     df['model'] = ''
 df['model'] = df['model'].fillna('')
 
-# Spaltenreihenfolge stabil halten
+# Keep the column order stable
 column_order = ['filename', 'date', 'total_insects', 'muscidae', 'others', 'model'] + DERIVED_COLUMNS
 df = df[[c for c in column_order if c in df.columns]]
 
 df.to_csv(csv_path, index=False)
-print(f"CSV aktualisiert: {csv_path}  ({len(new_df)} neu, {len(df)} gesamt)")
+print(f"CSV updated: {csv_path}  ({len(new_df)} new, {len(df)} total)")
 
 # ============== GENERATE CHARTS ==============
 
@@ -376,7 +376,7 @@ ax.set_ylabel('Average Number of Insects per Image')
 ax.set_title('Average Insect Population per Calendar Week')
 ax.set_xticks(x_kw)
 
-# Label with KW and image count
+# Label with calendar week and image count
 kw_labels = [f"{row['calendar_week']}\n(n={int(row['image_count'])})" for _, row in kw_grouped.iterrows()]
 ax.set_xticklabels(kw_labels, rotation=45, ha='right', fontsize=8)
 ax.legend()
@@ -489,7 +489,7 @@ print("Saved: distribution_pie_chart.png")
 print("\n" + "=" * 60)
 print("SUMMARY")
 print("=" * 60)
-print(f"Neu verarbeitet in diesem Lauf: {len(new_df)}")
+print(f"Newly processed in this run: {len(new_df)}")
 print(f"Total images in dataset: {len(df)}")
 print(f"Date range: {df['date'].min().strftime('%Y-%m-%d')} to {df['date'].max().strftime('%Y-%m-%d')}")
 print(f"Total insects detected: {df['total_insects'].sum()}")
@@ -500,10 +500,10 @@ print(f"Peak count: {df['total_insects'].max()} ({df.loc[df['total_insects'].idx
 
 models_used = sorted(m for m in df['model'].unique() if m)
 if len(models_used) > 1:
-    print(f"\nWARNUNG: Zeilen stammen aus mehreren Modellen: {', '.join(models_used)}")
-    print("Fuer konsistente Zahlen einmal mit FORCE_REPROCESS=1 durchlaufen lassen.")
+    print(f"\nWARNING: rows come from multiple models: {', '.join(models_used)}")
+    print("Run once with FORCE_REPROCESS=1 for consistent numbers.")
 elif models_used:
-    print(f"Modell: {models_used[0]}")
+    print(f"Model: {models_used[0]}")
 
 print(f"\nPer Calendar weeks:")
 for _, row in kw_grouped.iterrows():
