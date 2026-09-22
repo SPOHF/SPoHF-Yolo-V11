@@ -43,6 +43,8 @@ foundInsects/*
 
 # Ignore PyTorch model weights
 *.pt
+!Best-Model-Weights/last.pt
+!Best-Model-Weights/best.pt
 
 # Secrets
 .env
